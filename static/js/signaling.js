@@ -1,30 +1,33 @@
 export class Signaling {
     constructor() {
         this.socket = null;
-        this.connected = false;
         this.listeners = new Map();
+        this.connected = false;
     }
 
-    async connect() {
+    connect() {
         return new Promise((resolve, reject) => {
             this.socket = io(window.location.origin, {
                 transports: ['websocket', 'polling'],
                 reconnection: true,
-                reconnectionAttempts: 10,
+                reconnectionAttempts: 20,
                 timeout: 20000,
             });
 
             this.socket.on('connect', () => {
                 this.connected = true;
+                console.log('[Signaling] connected', this.socket.id);
                 resolve();
             });
 
             this.socket.on('connect_error', (error) => {
+                console.error('[Signaling] connect_error', error);
                 if (!this.connected) reject(error);
             });
 
             this.socket.on('disconnect', (reason) => {
                 this.connected = false;
+                console.warn('[Signaling] disconnected', reason);
                 this.emitLocal('disconnected', { reason });
             });
 
@@ -32,17 +35,17 @@ export class Signaling {
                 'connected',
                 'room-created',
                 'room-joined',
-                'room-state-update',
+                'room-state',
                 'join-error',
-                'peer-joined',
-                'peer-left',
+                'signal-error',
                 'offer',
                 'answer',
                 'ice-candidate',
-                'transfer-accepted',
-                'transfer-rejected',
             ].forEach((eventName) => {
-                this.socket.on(eventName, (payload) => this.emitLocal(eventName, payload));
+                this.socket.on(eventName, (payload) => {
+                    console.log('[Signaling] event', eventName, payload || {});
+                    this.emitLocal(eventName, payload || {});
+                });
             });
         });
     }
@@ -52,24 +55,23 @@ export class Signaling {
         this.listeners.get(eventName).push(callback);
     }
 
-    off(eventName, callback) {
-        if (!this.listeners.has(eventName)) return;
-        this.listeners.set(eventName, this.listeners.get(eventName).filter((cb) => cb !== callback));
+    send(eventName, payload = {}) {
+        if (!this.socket || !this.connected) {
+            console.warn('[Signaling] blocked send while disconnected', eventName);
+            return;
+        }
+        console.log('[Signaling] send', eventName, payload);
+        this.socket.emit(eventName, payload);
     }
 
     emitLocal(eventName, payload) {
-        (this.listeners.get(eventName) || []).forEach((callback) => {
+        for (const cb of this.listeners.get(eventName) || []) {
             try {
-                callback(payload);
+                cb(payload);
             } catch (error) {
-                console.error(`[Signaling] listener failed for ${eventName}`, error);
+                console.error('[Signaling] listener failure', eventName, error);
             }
-        });
-    }
-
-    send(eventName, payload = {}) {
-        if (!this.socket || !this.connected) return;
-        this.socket.emit(eventName, payload);
+        }
     }
 
     setName(name) {
