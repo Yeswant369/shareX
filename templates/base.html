@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+
+    <meta name="description"
+        content="ShareX — Peer-to-peer file sharing across devices. No uploads. No servers. Just direct transfer.">
+
+    <meta name="theme-color" content="#000000">
+
+    <title>ShareX — P2P File Sharing</title>
+
+    <!-- ============================= -->
+    <!-- PWA -->
+    <!-- ============================= -->
+    <link rel="manifest" href="/static/pwa/manifest.json">
+
+    <!-- ============================= -->
+    <!-- Fonts -->
+    <!-- ============================= -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap"
+        rel="stylesheet">
+
+    <!-- ============================= -->
+    <!-- Styles -->
+    <!-- ============================= -->
+    <link rel="stylesheet" href="/static/css/base.css">
+    <link rel="stylesheet" href="/static/css/layout.css">
+    <link rel="stylesheet" href="/static/css/hero.css">
+    <link rel="stylesheet" href="/static/css/animations.css">
+    <link rel="stylesheet" href="/static/css/mobile.css">
+    <link rel="stylesheet" href="/static/css/desktop.css">
+
+    {% block head %}{% endblock %}
+</head>
+
+<body>
+    {% block body %}{% endblock %}
+
+    <!-- ============================= -->
+    <!-- LIBRARIES (LOAD FIRST) -->
+    <!-- ============================= -->
+
+    <!-- Socket.IO -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.5/socket.io.min.js"></script>
+
+    <!-- ============================= -->
+    <!-- MAIN APP MODULE -->
+    <!-- ============================= -->
+    <script type="module" src="/static/js/main.js"></script>
+
+    <!-- ============================= -->
+    <!-- SERVICE WORKER -->
+    <!-- ============================= -->
+    <script>
+        if ('serviceWorker' in navigator && location.hostname !== 'localhost') {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('/static/pwa/service-worker.js')
+                    .then(reg => console.log('[SW] Registered:', reg.scope))
+                    .catch(err => console.warn('[SW] Registration failed:', err));
+            });
+        }
+    </script>
+
+</body>
+
+</html>

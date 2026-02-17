@@ -1,0 +1,238 @@
+{% extends "base.html" %}
+
+{% block body %}
+<div id="app" class="app">
+
+    <!-- ─── HERO SECTION ─── -->
+    <header id="hero-section" class="hero">
+        <div class="hero__content">
+            <h1 class="hero__title">
+                transfer files<br>
+                across devices<span class="hero__dot">.</span>
+                <span class="hero__cursor">|</span>
+            </h1>
+        </div>
+    </header>
+
+    <!-- ─── MOBILE SPLIT LAYOUT ─── -->
+    <section id="mobile-split" class="split-layout mobile-only">
+        <div class="split-layout__panel split-layout__panel--top" id="panel-share">
+            <div class="split-layout__dots split-layout__dots--up" id="dots-up"></div>
+            <button class="split-layout__cta" id="btn-share" aria-label="Share files">
+                <span class="split-layout__cta-label">SEND</span>
+                <span class="split-layout__cta-arrow">↑</span>
+            </button>
+        </div>
+        <div class="split-layout__divider"></div>
+        <div class="split-layout__panel split-layout__panel--bottom" id="panel-receive">
+            <div class="split-layout__dots split-layout__dots--down" id="dots-down"></div>
+            <button class="split-layout__cta" id="btn-receive" aria-label="Receive files">
+                <span class="split-layout__cta-label">RECEIVE</span>
+                <span class="split-layout__cta-arrow">↓</span>
+            </button>
+        </div>
+    </section>
+
+    <!-- ─── DESKTOP ACTION AREA ─── -->
+    <section id="desktop-actions" class="desktop-actions desktop-only">
+        <div class="desktop-actions__grid">
+            <div class="desktop-actions__card" id="action-share">
+                <span class="desktop-actions__step">01</span>
+                <h2 class="desktop-actions__title">Send</h2>
+                <p class="desktop-actions__desc">Select files and send to nearby devices</p>
+                <button class="desktop-actions__btn" id="btn-share-desktop" aria-label="Send files">
+                    SELECT FILES
+                </button>
+            </div>
+            <div class="desktop-actions__card" id="action-receive">
+                <span class="desktop-actions__step">02</span>
+                <h2 class="desktop-actions__title">Receive</h2>
+                <p class="desktop-actions__desc">Open to incoming file transfers</p>
+                <button class="desktop-actions__btn" id="btn-receive-desktop" aria-label="Receive files">
+                    START RECEIVING
+                </button>
+            </div>
+        </div>
+    </section>
+
+    <!-- ─── CONNECTION MODES ─── -->
+    <section id="connection-modes" class="modes">
+        <div class="modes__container">
+            <div class="modes__header">
+                <h2 class="modes__title">Connect</h2>
+                <p class="modes__subtitle">Choose how to pair with another device</p>
+            </div>
+            <div class="modes__grid">
+                <button class="modes__card" id="mode-auto" aria-label="Auto detect nearby devices">
+                    <span class="modes__card-icon">◎</span>
+                    <span class="modes__card-label">Nearby</span>
+                    <span class="modes__card-desc">Auto-detect</span>
+                </button>
+                <button class="modes__card" id="mode-qr" aria-label="Show QR code">
+                    <span class="modes__card-icon">⬡</span>
+                    <span class="modes__card-label">QR Code</span>
+                    <span class="modes__card-desc">Show QR</span>
+                </button>
+                <button class="modes__card mobile-only" id="mode-scan" aria-label="Scan QR Code">
+                    <span class="modes__card-icon">↹</span>
+                    <span class="modes__card-label">Scan QR</span>
+                    <span class="modes__card-desc">Camera</span>
+                </button>
+                <button class="modes__card" id="mode-code" aria-label="Connect via numeric code">
+                    <span class="modes__card-icon">⌗</span>
+                    <span class="modes__card-label">Code</span>
+                    <span class="modes__card-desc">3-digit join</span>
+                </button>
+            </div>
+        </div>
+    </section>
+
+    <!-- ─── DEVICE CARDS (Nearby peers) ─── -->
+    <section id="device-list" class="devices hidden">
+        <div class="devices__container">
+            <div class="devices__header">
+                <h2 class="devices__title">Nearby Devices</h2>
+                <span class="devices__count" id="peer-count">0</span>
+            </div>
+            <div class="devices__grid" id="devices-grid">
+                <!-- Dynamic device cards inserted here -->
+            </div>
+            <div class="devices__empty" id="devices-empty">
+                <p>Scanning for nearby devices...</p>
+                <div class="devices__pulse"></div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ─── QR MODAL ─── -->
+    <div id="qr-modal" class="modal hidden" role="dialog" aria-label="QR Code">
+        <div class="modal__backdrop" id="qr-backdrop"></div>
+        <div class="modal__content">
+            <button class="modal__close" id="qr-close" aria-label="Close">✕</button>
+            <div class="modal__body">
+                <h2 class="modal__title">Scan to Connect</h2>
+                <div class="modal__qr" id="qr-canvas-container">
+                    <canvas id="qr-canvas"></canvas>
+                </div>
+                <p class="modal__code" id="qr-room-code">---</p>
+                <p class="modal__hint">Or enter the code manually below</p>
+            </div>
+        </div>
+    </div>
+
+
+    <!-- ─── NAME MODAL ─── -->
+    <div id="name-modal" class="modal hidden">
+        <div class="modal__backdrop"></div>
+        <div class="modal__content">
+            <h3 class="modal__title">Identify Yourself</h3>
+            <p class="modal__desc">Enter a name to be visible to nearby devices.</p>
+            <input type="text" id="my-name-input" class="modal__input" placeholder="e.g. John's Phone" maxlength="20">
+            <div class="modal__footer">
+                <button id="save-name-btn" class="btn btn--primary">Continue</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ─── PAIRING MODAL (Sender) ─── -->
+    <div id="pairing-modal" class="modal hidden">
+        <div class="modal__backdrop"></div>
+        <div class="modal__content">
+            <button class="modal__close" id="pairing-close">×</button>
+            <h3 class="modal__title">Ready to Send</h3>
+            <p class="modal__desc">Ask receiver to enter this code or scan QR.</p>
+
+            <div class="code-display" id="pairing-code">...</div>
+
+            <div class="qr-container">
+                <canvas id="pairing-qr-canvas"></canvas>
+            </div>
+
+            <p class="modal__status pulse">Waiting for receiver...</p>
+        </div>
+    </div>
+
+    <!-- ─── SCANNER MODAL ─── -->
+    <div id="scanner-modal" class="modal hidden" role="dialog" aria-label="Scan QR">
+        <div class="modal__backdrop" id="scanner-backdrop"></div>
+        <div class="modal__content">
+            <button class="modal__close" id="scanner-close" aria-label="Close">✕</button>
+            <div class="modal__body">
+                <h2 class="modal__title">Scan QR Code</h2>
+                <div id="reader" style="width: 100%; border: var(--border-medium);"></div>
+                <p class="modal__hint">Point camera at host device</p>
+                <p class="modal__error hidden" id="scanner-error"></p>
+            </div>
+        </div>
+    </div>
+
+    <!-- ─── NUMERIC JOIN MODAL ─── -->
+    <div id="code-modal" class="modal hidden" role="dialog" aria-label="Enter Code">
+        <div class="modal__backdrop" id="code-backdrop"></div>
+        <div class="modal__content">
+            <button class="modal__close" id="code-close" aria-label="Close">✕</button>
+            <div class="modal__body">
+                <h2 class="modal__title">Enter Code</h2>
+                <div class="code-input" id="code-input-group">
+                    <input type="text" id="code-digit-1" class="code-input__digit" maxlength="1" inputmode="numeric"
+                        pattern="[0-9]" autocomplete="off">
+                    <input type="text" id="code-digit-2" class="code-input__digit" maxlength="1" inputmode="numeric"
+                        pattern="[0-9]" autocomplete="off">
+                    <input type="text" id="code-digit-3" class="code-input__digit" maxlength="1" inputmode="numeric"
+                        pattern="[0-9]" autocomplete="off">
+                </div>
+                <button class="modal__btn" id="code-join-btn">JOIN</button>
+                <p class="modal__error hidden" id="code-error"></p>
+            </div>
+        </div>
+    </div>
+
+    <!-- ─── TRANSFER PROGRESS OVERLAY ─── -->
+    <div id="transfer-overlay" class="transfer-overlay hidden">
+        <div class="transfer-overlay__content">
+            <div class="transfer-overlay__header">
+                <h3 class="transfer-overlay__title" id="transfer-title">Transferring...</h3>
+                <button class="transfer-overlay__cancel" id="transfer-cancel" aria-label="Cancel transfer">✕</button>
+            </div>
+            <div class="transfer-overlay__file" id="transfer-filename">file.txt</div>
+            <div class="progress-bar" id="transfer-progress-bar">
+                <div class="progress-bar__track">
+                    <div class="progress-bar__fill" id="transfer-progress-fill"></div>
+                </div>
+                <div class="progress-bar__info">
+                    <span class="progress-bar__percent" id="transfer-percent">0%</span>
+                    <span class="progress-bar__speed" id="transfer-speed">0 KB/s</span>
+                </div>
+            </div>
+            <div class="transfer-overlay__status" id="transfer-status">Connecting...</div>
+        </div>
+    </div>
+
+    <!-- ─── INCOMING TRANSFER REQUEST ─── -->
+    <div id="incoming-modal" class="modal hidden" role="dialog" aria-label="Incoming Transfer">
+        <div class="modal__backdrop" id="incoming-backdrop"></div>
+        <div class="modal__content">
+            <div class="modal__body">
+                <h2 class="modal__title">Incoming File</h2>
+                <div class="incoming__info">
+                    <p class="incoming__filename" id="incoming-filename">---</p>
+                    <p class="incoming__size" id="incoming-size">---</p>
+                    <p class="incoming__from" id="incoming-from">From: ---</p>
+                </div>
+                <div class="incoming__actions">
+                    <button class="incoming__btn incoming__btn--accept" id="incoming-accept">ACCEPT</button>
+                    <button class="incoming__btn incoming__btn--reject" id="incoming-reject">DECLINE</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ─── FILE INPUT (hidden) ─── -->
+    <input type="file" id="file-input" multiple hidden>
+
+    <!-- ─── TOAST NOTIFICATIONS ─── -->
+    <div id="toast-container" class="toast-container"></div>
+
+</div>
+<script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
+{% endblock %}

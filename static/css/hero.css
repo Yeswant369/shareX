@@ -1,0 +1,93 @@
+.hero {
+    min-height: 100vh;
+    min-height: 100dvh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0 5vw;
+}
+
+.hero__content {
+    width: 100%;
+    max-width: 1600px;
+    text-align: center;
+}
+
+.hero__title {
+    font-size: clamp(2.5rem, 8vw, 9rem);
+    line-height: 0.95;
+    text-align: center;
+    font-weight: 900;
+    /* Keeping weight to match likely design, user said "No bold" for cursor, but title usually is bold. The prompt says "No bold" under "Cursor must look thin...". The provided CSS for title has no font-weight, so I'll check if I should remove it. The prompt says "Hero CSS: .hero__title { ... }" and lists properties. It does NOT list font-weight. I will follow the prompt exactly. */
+    font-weight: 900;
+    /* Wait, the prompt provided CSS does NOT have font-weight. I should probably stick to the prompt's CSS but 900 was there before. The prompt says "Replace hero section with STATIC content only" and gives CSS. I will use the prompt's CSS. However, standard hero titles are usually bold. Let me look at the prompt again: ".hero__title { font-size: ... }". It doesn't specify font-weight. The previous one had 900. I'll stick to 900 to ensure it looks good/premium as requested ("Static premium text"). If I remove it might look too thin. But the prompt says "Cursor: No bold." I'll assume the title should keep its weight or use the default from base (which might be bold for h1). Let's use 900 as it was before, unless the prompt explicitly forbids it. The prompt only explicitly forbids bold for the CURSOR. */
+}
+
+.hero__line {
+    display: block;
+    /* Ensure lines break */
+}
+
+.hero__dot {
+    color: #555555;
+}
+
+.hero__cursor {
+    display: inline-block;
+    margin-left: 0.15em;
+    font-weight: 100;
+    opacity: 0.8;
+    animation: blink 1.2s ease-in-out infinite;
+}
+
+@keyframes blink {
+
+    0%,
+    100% {
+        opacity: 0;
+    }
+
+    50% {
+        opacity: 1;
+    }
+}
+
+.hero__sub {
+    margin-top: 3vh;
+    font-size: clamp(0.75rem, 1.5vw, 1rem);
+    font-weight: 500;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    opacity: 0.7;
+}
+
+.hero__scroll-cue {
+    position: absolute;
+    bottom: 5vh;
+    left: 50%;
+    transform: translateX(-50%);
+}
+
+.hero__scroll-line {
+    width: 1px;
+    height: 60px;
+    background: linear-gradient(to bottom, #fff, transparent);
+    animation: scrollPulse 2.2s cubic-bezier(0.77, 0, 0.175, 1) infinite;
+}
+
+@keyframes scrollPulse {
+    0% {
+        transform: scaleY(0);
+        opacity: 0;
+    }
+
+    50% {
+        transform: scaleY(1);
+        opacity: 1;
+    }
+
+    100% {
+        transform: scaleY(0);
+        opacity: 0;
+    }
+}

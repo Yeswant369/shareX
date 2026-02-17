@@ -1,0 +1,119 @@
+/* ═══════════════════════════════════════════════════
+   ShareX — Desktop Layout (>768px)
+   12-column grid. Extreme horizontal padding.
+   ═══════════════════════════════════════════════════ */
+
+@media (min-width: 769px) {
+
+    .hero {
+        padding: var(--space-3xl) var(--space-2xl);
+    }
+
+    /* ─── Desktop Actions ─── */
+    .desktop-actions {
+        padding: var(--space-2xl) var(--space-2xl);
+        border-top: var(--border-thin);
+    }
+
+    .desktop-actions__grid {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 1px;
+        max-width: 960px;
+        margin: 0 auto;
+        border: var(--border-thin);
+    }
+
+    .desktop-actions__card {
+        padding: var(--space-2xl) var(--space-xl);
+        position: relative;
+    }
+
+    .desktop-actions__card:first-child {
+        border-right: var(--border-thin);
+    }
+
+    .desktop-actions__step {
+        font-size: var(--font-3xl);
+        font-weight: 900;
+        opacity: 0.06;
+        position: absolute;
+        top: var(--space-md);
+        right: var(--space-md);
+        letter-spacing: -0.05em;
+        font-variant-numeric: tabular-nums;
+        line-height: 1;
+    }
+
+    .desktop-actions__title {
+        font-size: var(--font-xl);
+        font-weight: 900;
+        letter-spacing: -0.03em;
+        text-transform: uppercase;
+        margin-bottom: var(--space-sm);
+    }
+
+    .desktop-actions__desc {
+        font-size: var(--font-sm);
+        font-weight: 400;
+        letter-spacing: 0.03em;
+        opacity: 0.5;
+        margin-bottom: var(--space-lg);
+        max-width: 280px;
+    }
+
+    .desktop-actions__btn {
+        display: inline-block;
+        padding: 14px 40px;
+        border: var(--border-medium);
+        font-size: var(--font-sm);
+        font-weight: 700;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        cursor: pointer;
+        transition: background var(--duration-fast), color var(--duration-fast);
+        background: none;
+        color: var(--white);
+    }
+
+    .desktop-actions__btn:hover {
+        background: var(--white);
+        color: var(--black);
+    }
+
+    /* ─── Modes Desktop ─── */
+    .modes {
+        padding: var(--space-2xl) var(--space-2xl);
+    }
+
+    .modes__card {
+        padding: var(--space-xl) var(--space-lg);
+    }
+
+    /* ─── Devices Desktop ─── */
+    .devices {
+        padding: var(--space-2xl) var(--space-2xl);
+    }
+
+    .devices__grid {
+        grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    }
+}
+
+@media (min-width: 1200px) {
+    .hero {
+        padding: var(--space-3xl) var(--space-3xl);
+    }
+
+    .desktop-actions {
+        padding: var(--space-2xl) var(--space-3xl);
+    }
+
+    .modes {
+        padding: var(--space-2xl) var(--space-3xl);
+    }
+
+    .devices {
+        padding: var(--space-2xl) var(--space-3xl);
+    }
+}
