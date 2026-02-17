@@ -24,7 +24,7 @@ CORS(app, resources={r"/*": {"origins": "*"}})
 socketio = SocketIO(
     app,
     cors_allowed_origins="*",
-    async_mode='eventlet',
+    async_mode='gevent',
     ping_timeout=30,
     ping_interval=15,
     max_http_buffer_size=1024 * 1024,
