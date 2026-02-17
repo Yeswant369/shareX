@@ -4,27 +4,38 @@ export class Signaling {
         this.listeners = new Map();
         this.connected = false;
         this.pendingMessages = [];
+        this.hasResolvedConnection = false;
     }
 
     connect() {
         return new Promise((resolve, reject) => {
             this.socket = io(window.location.origin, {
-                transports: ['websocket', 'polling'],
+                // Start with polling for mobile/proxy environments (e.g. Render edge),
+                // then upgrade to websocket when available.
+                transports: ['polling', 'websocket'],
+                upgrade: true,
                 reconnection: true,
-                reconnectionAttempts: 20,
-                timeout: 20000,
+                reconnectionAttempts: Infinity,
+                timeout: 30000,
             });
 
             this.socket.on('connect', () => {
                 this.connected = true;
                 console.log('[Signaling] connected', this.socket.id);
                 this._flushPendingMessages();
-                resolve();
+                if (!this.hasResolvedConnection) {
+                    this.hasResolvedConnection = true;
+                    resolve();
+                }
             });
 
             this.socket.on('connect_error', (error) => {
                 console.error('[Signaling] connect_error', error);
-                if (!this.connected) reject(error);
+                this.emitLocal('connect-error', { message: error?.message || 'Connection failed' });
+                if (!this.hasResolvedConnection) {
+                    this.hasResolvedConnection = true;
+                    reject(error);
+                }
             });
 
             this.socket.on('disconnect', (reason) => {

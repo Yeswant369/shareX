@@ -127,6 +127,10 @@ class ShareXApp {
         this.signaling.on('signal-error', ({ message }) => {
             this.uiState.showToast(message || 'Signaling rejected');
         });
+
+        this.signaling.on('connect-error', ({ message }) => {
+            this.uiState.showToast(`Unable to reach signaling server: ${message || 'timeout'}`);
+        });
     }
 
     _bindButtons() {
