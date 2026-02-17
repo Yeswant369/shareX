@@ -16,10 +16,9 @@ export class Signaling {
      */
     async connect() {
         return new Promise((resolve, reject) => {
-            const protocol = window.location.protocol;
-            const host = window.location.host;
+            const origin = window.location.origin;
 
-            this.socket = io(`${protocol}//${host}`, {
+            this.socket = io(origin, {
                 transports: ['websocket', 'polling'],
                 reconnection: true,
                 reconnectionAttempts: 10,
@@ -67,7 +66,8 @@ export class Signaling {
                 'answer',
                 'ice-candidate',
                 'transfer-accepted',
-                'transfer-rejected'
+                'transfer-rejected',
+                'host-changed'
             ];
 
             relayEvents.forEach(event => {
