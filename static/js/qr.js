@@ -1,22 +1,12 @@
-/**
- * ShareX — QR Connect Module
- * Handles QR generation and Camera Scanning.
- */
-
-import QRCode from "https://cdn.jsdelivr.net/npm/qrcode@1.5.3/+esm";
+import QRCode from 'https://cdn.jsdelivr.net/npm/qrcode@1.5.3/+esm';
 
 export class QRConnect {
     constructor(signaling) {
         this.signaling = signaling;
-
-        // QR Generation UI (Pairing Modal)
-        this.genModal = document.getElementById('pairing-modal');
-        this.genClose = document.getElementById('pairing-close');
-        this.genBackdrop = null; // No separate backdrop for this modal style
+        this.modal = document.getElementById('pairing-modal');
+        this.closeBtn = document.getElementById('pairing-close');
         this.canvas = document.getElementById('pairing-qr-canvas');
         this.codeDisplay = document.getElementById('pairing-code');
-
-        // QR Scanner UI
         this.scanModal = document.getElementById('scanner-modal');
         this.scanClose = document.getElementById('scanner-close');
         this.scanBackdrop = document.getElementById('scanner-backdrop');
@@ -27,116 +17,80 @@ export class QRConnect {
     }
 
     _bindEvents() {
-        // Generation events
-        if (this.genClose) this.genClose.addEventListener('click', () => this.hideGen());
-        if (this.genBackdrop) this.genBackdrop.addEventListener('click', () => this.hideGen());
+        this.closeBtn?.addEventListener('click', () => this.hideGen());
+        this.scanClose?.addEventListener('click', () => this.stopScan());
+        this.scanBackdrop?.addEventListener('click', () => this.stopScan());
 
-        // Scanner events
-        if (this.scanClose) this.scanClose.addEventListener('click', () => this.stopScan());
-        if (this.scanBackdrop) this.scanBackdrop.addEventListener('click', () => this.stopScan());
-
-        // Room Created
-        this.signaling.on('room-created', (data) => {
-            if (this.codeDisplay) this.codeDisplay.textContent = data.code;
-            this._renderQR(data.room_id);
+        this.signaling.on('room-created', async (data) => {
+            this.codeDisplay.textContent = data.numeric_code;
+            await this._renderQR(data.room_id);
         });
     }
 
-    // ─── GENERATOR ───
-
     showGen() {
-        if (this.genModal) this.genModal.classList.remove('hidden');
+        this.modal?.classList.remove('hidden');
         this.signaling.send('create-room', {});
     }
 
     hideGen() {
-        if (this.genModal) this.genModal.classList.add('hidden');
-        if (this.scanModal) this.scanModal.classList.add('hidden'); // Ensure scanner is closed too
-
-        // Clear gen canvas
-        if (this.canvas) {
-            const ctx = this.canvas.getContext('2d');
-            ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
-        }
+        this.modal?.classList.add('hidden');
+        this.stopScan();
     }
 
     async _renderQR(roomId) {
         if (!this.canvas) return;
-        const url = `${window.location.origin}?room=${roomId}`;
-        try {
-            await QRCode.toCanvas(this.canvas, url, {
-                width: 220, margin: 0,
-                color: { dark: '#000000', light: '#FFFFFF' },
-                errorCorrectionLevel: 'M'
-            });
-            console.log('[QR] Generated:', url);
-        } catch (err) {
-            console.error('[QR] Gen failed:', err);
-        }
+        const url = `${window.location.origin}/?room=${encodeURIComponent(roomId)}`;
+        await QRCode.toCanvas(this.canvas, url, {
+            width: 220,
+            margin: 1,
+            errorCorrectionLevel: 'M',
+        });
     }
 
-    // ─── SCANNER ───
-
     startScan() {
-        console.log('[QR] Starting scanner...');
-        if (this.scanModal) this.scanModal.classList.remove('hidden');
-        if (this.scanError) this.scanError.classList.add('hidden');
+        this.scanModal?.classList.remove('hidden');
+        this.scanError?.classList.add('hidden');
 
-        // Check if library loaded
         if (!window.Html5Qrcode) {
-            this._showError('Scanner library not loaded. Check internet.');
+            this._showError('Scanner not available in this environment.');
             return;
         }
 
-        const config = { fps: 10, qrbox: { width: 250, height: 250 } };
-
-        this.scanner = new Html5Qrcode("reader");
-
+        this.scanner = new Html5Qrcode('reader');
         this.scanner.start(
-            { facingMode: "environment" },
-            config,
-            (decodedText) => this._onScanSuccess(decodedText),
-            (errorMessage) => { /* ignore per-frame errors */ }
-        ).catch(err => {
-            console.error('[QR] Camera error:', err);
-            this._showError('Camera access denied or error.');
-        });
+            { facingMode: 'environment' },
+            { fps: 10, qrbox: { width: 250, height: 250 } },
+            (decodedText) => this._onScan(decodedText),
+            () => { },
+        ).catch(() => this._showError('Unable to access camera.'));
     }
 
     stopScan() {
         if (this.scanner) {
-            this.scanner.stop().then(() => {
-                this.scanner.clear();
-                this.scanner = null;
-            }).catch(err => console.error('[QR] Stop failed', err));
+            this.scanner.stop().then(() => this.scanner.clear()).catch(() => { });
+            this.scanner = null;
         }
-        if (this.scanModal) this.scanModal.classList.add('hidden');
-        if (this.scanError) this.scanError.classList.add('hidden');
+        this.scanModal?.classList.add('hidden');
     }
 
-    _onScanSuccess(decodedText) {
-        console.log('[QR] Scanned:', decodedText);
-
+    _onScan(decodedText) {
         try {
-            const url = new URL(decodedText);
-            const roomId = url.searchParams.get('room');
-
-            if (roomId) {
-                this.stopScan();
-                console.log('[QR] Join room:', roomId);
-                this.signaling.send('join-room', { room_id: roomId });
-            } else {
-                this._showError('Invalid QR Code');
+            const parsed = new URL(decodedText);
+            const roomId = parsed.searchParams.get('room');
+            if (!roomId) {
+                this._showError('Invalid QR code.');
+                return;
             }
-        } catch (e) {
-            this._showError('Invalid URL in QR');
+            this.stopScan();
+            this.signaling.send('join-room', { room_id: roomId });
+        } catch (_) {
+            this._showError('Invalid QR content.');
         }
     }
 
-    _showError(msg) {
-        if (this.scanError) {
-            this.scanError.textContent = msg;
-            this.scanError.classList.remove('hidden');
-        }
+    _showError(message) {
+        if (!this.scanError) return;
+        this.scanError.textContent = message;
+        this.scanError.classList.remove('hidden');
     }
 }
