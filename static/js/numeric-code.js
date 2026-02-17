@@ -2,72 +2,70 @@ export class NumericCode {
     constructor(signaling) {
         this.signaling = signaling;
         this.modal = document.getElementById('code-modal');
-        this.closeBtn = document.getElementById('code-close');
         this.backdrop = document.getElementById('code-backdrop');
+        this.closeBtn = document.getElementById('code-close');
         this.joinBtn = document.getElementById('code-join-btn');
-        this.errorEl = document.getElementById('code-error');
-        this.digits = [
+        this.error = document.getElementById('code-error');
+        this.inputs = [
             document.getElementById('code-digit-1'),
             document.getElementById('code-digit-2'),
             document.getElementById('code-digit-3'),
         ];
+
         this._bind();
     }
 
     _bind() {
-        this.closeBtn?.addEventListener('click', () => this.hide());
         this.backdrop?.addEventListener('click', () => this.hide());
-        this.joinBtn?.addEventListener('click', () => this.submit());
+        this.closeBtn?.addEventListener('click', () => this.hide());
+        this.joinBtn?.addEventListener('click', () => {
+            console.log('[UI] Code join button clicked');
+            this.submit();
+        });
 
-        this.digits.forEach((input, index) => {
+        this.inputs.forEach((input, index) => {
             if (!input) return;
             input.addEventListener('input', () => {
                 input.value = input.value.replace(/\D/g, '').slice(0, 1);
-                if (input.value && index < this.digits.length - 1) this.digits[index + 1]?.focus();
-                this.clearError();
+                if (input.value && index < this.inputs.length - 1) this.inputs[index + 1]?.focus();
             });
             input.addEventListener('keydown', (event) => {
                 if (event.key === 'Enter') this.submit();
-                if (event.key === 'Backspace' && !input.value && index > 0) this.digits[index - 1]?.focus();
+                if (event.key === 'Backspace' && !input.value && index > 0) this.inputs[index - 1]?.focus();
             });
         });
-
-        this.signaling.on('room-joined', () => this.hide());
-        this.signaling.on('join-error', (data) => this.showError(data?.message || 'Failed to join room'));
     }
 
     show() {
-        this.modal?.classList.remove('hidden');
         this.clear();
-        this.digits[0]?.focus();
+        this.modal?.classList.remove('hidden');
+        this.inputs[0]?.focus();
     }
 
     hide() {
         this.modal?.classList.add('hidden');
-        this.clear();
     }
 
     submit() {
-        const code = this.digits.map((d) => d?.value || '').join('');
+        const code = this.inputs.map((input) => input?.value || '').join('');
         if (!/^\d{3}$/.test(code)) {
-            this.showError('Enter a valid 3-digit code');
+            this.showError('Enter 3 digits');
             return;
         }
+        console.log('[Room] join attempt with code', code);
         this.signaling.send('join-room', { code });
     }
 
     clear() {
-        this.digits.forEach((d) => { if (d) d.value = ''; });
-        this.clearError();
+        this.inputs.forEach((input) => {
+            if (input) input.value = '';
+        });
+        this.error?.classList.add('hidden');
     }
 
     showError(message) {
-        if (!this.errorEl) return;
-        this.errorEl.textContent = message;
-        this.errorEl.classList.remove('hidden');
-    }
-
-    clearError() {
-        this.errorEl?.classList.add('hidden');
+        if (!this.error) return;
+        this.error.textContent = message;
+        this.error.classList.remove('hidden');
     }
 }

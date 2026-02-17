@@ -3,195 +3,156 @@ import { getICEConfig } from './ice-config.js';
 export class WebRTCManager {
     constructor(signaling) {
         this.signaling = signaling;
-        this.connections = new Map();
-        this.currentRoomId = null;
-        this.currentState = 'closed';
-        this.hostId = null;
+        this.peerConnection = null;
+        this.dataChannel = null;
+        this.remotePeerId = null;
+        this.roomId = null;
         this.isHost = false;
+        this.connectionState = 'idle';
+        this.hasReceivedOffer = false;
+
         this._onMessage = null;
-        this._onDataChannel = null;
-        this._onStateChange = null;
+        this._onState = null;
 
         this._bindSignaling();
     }
 
-    onMessage(callback) { this._onMessage = callback; }
-    onDataChannel(callback) { this._onDataChannel = callback; }
-    onStateChange(callback) { this._onStateChange = callback; }
-
-    offStateChange(callback) {
-        if (this._onStateChange === callback) this._onStateChange = null;
+    setRoomContext({ roomId, isHost, remotePeerId }) {
+        this.roomId = roomId;
+        this.isHost = isHost;
+        this.remotePeerId = remotePeerId || null;
+        if (!this.remotePeerId) this.close();
     }
 
-    async createConnection(peerId, fileMeta = null) {
-        if (!this.isHost || this.currentState !== 'ready' || !this.currentRoomId) {
-            console.warn('[WebRTC] createConnection blocked: host/ready/room preconditions failed');
-            return null;
+    onMessage(cb) { this._onMessage = cb; }
+    onStateChange(cb) { this._onState = cb; }
+
+    isReadyForTransfer() {
+        return this.peerConnection?.connectionState === 'connected' && this.dataChannel?.readyState === 'open';
+    }
+
+    async ensureHostOffer(fileMeta = null) {
+        if (!this.isHost || !this.roomId || !this.remotePeerId) {
+            console.warn('[WebRTC] host offer blocked: invalid room context');
+            return false;
         }
 
-        if (this.connections.has(peerId)) {
-            const existing = this.connections.get(peerId);
-            if (existing?.dc?.readyState === 'open') return existing;
+        if (this.isReadyForTransfer()) return true;
+        if (!this.peerConnection) {
+            await this._createPeerConnection();
+            this.dataChannel = this.peerConnection.createDataChannel('sharex-transfer', { ordered: true });
+            this._setupDataChannel(this.dataChannel);
         }
 
-        const config = await getICEConfig();
-        const pc = new RTCPeerConnection(config);
-        const dc = pc.createDataChannel('sharex-transfer', { ordered: true });
-
-        this._setupPeerConnection(pc, peerId);
-        this._setupDataChannel(dc, peerId);
-        this.connections.set(peerId, { pc, dc, state: 'connecting' });
-
-        const offer = await pc.createOffer();
-        await pc.setLocalDescription(offer);
-
+        const offer = await this.peerConnection.createOffer();
+        await this.peerConnection.setLocalDescription(offer);
+        console.log('[WebRTC] sending offer');
         this.signaling.send('offer', {
-            target: peerId,
-            room_id: this.currentRoomId,
-            sdp: pc.localDescription,
+            room_id: this.roomId,
+            target: this.remotePeerId,
+            sdp: this.peerConnection.localDescription,
             file_meta: fileMeta,
         });
-
-        return { pc, dc };
+        return true;
     }
 
-    async handleOffer(sdp, senderId, roomId) {
-        if (this.isHost || !this.currentRoomId || roomId !== this.currentRoomId) return;
+    send(data) {
+        if (!this.dataChannel || this.dataChannel.readyState !== 'open') {
+            throw new Error('Data channel not open');
+        }
+        this.dataChannel.send(data);
+    }
 
+    close() {
+        try { this.dataChannel?.close(); } catch (_) {}
+        try { this.peerConnection?.close(); } catch (_) {}
+        this.dataChannel = null;
+        this.peerConnection = null;
+        this.hasReceivedOffer = false;
+        this._setState('idle');
+    }
+
+    async _createPeerConnection() {
         const config = await getICEConfig();
-        const pc = new RTCPeerConnection(config);
-        this._setupPeerConnection(pc, senderId);
+        this.peerConnection = new RTCPeerConnection(config);
+        this._setState('connecting');
 
-        pc.ondatachannel = (event) => {
-            const dc = event.channel;
-            this._setupDataChannel(dc, senderId);
-            const conn = this.connections.get(senderId) || { pc, dc: null, state: 'connecting' };
-            conn.dc = dc;
-            this.connections.set(senderId, conn);
-            if (this._onDataChannel) this._onDataChannel(senderId, dc);
-        };
-
-        this.connections.set(senderId, { pc, dc: null, state: 'connecting' });
-
-        await pc.setRemoteDescription(new RTCSessionDescription(sdp));
-        const answer = await pc.createAnswer();
-        await pc.setLocalDescription(answer);
-
-        this.signaling.send('answer', {
-            target: senderId,
-            room_id: this.currentRoomId,
-            sdp: pc.localDescription,
-        });
-    }
-
-    getDataChannel(peerId) {
-        return this.connections.get(peerId)?.dc || null;
-    }
-
-    close(peerId) {
-        const conn = this.connections.get(peerId);
-        if (!conn) return;
-        try { conn.dc?.close(); } catch (_) { }
-        try { conn.pc?.close(); } catch (_) { }
-        this.connections.delete(peerId);
-    }
-
-    closeAll() {
-        Array.from(this.connections.keys()).forEach((peerId) => this.close(peerId));
-    }
-
-    _bindSignaling() {
-        this.signaling.on('connected', () => {
-            this.isHost = false;
-            this.currentRoomId = null;
-            this.currentState = 'closed';
-            this.hostId = null;
-        });
-
-        this.signaling.on('room-created', (data) => {
-            this.currentRoomId = data.room_id;
-            this.hostId = data.host_id;
-            this.isHost = true;
-            this.currentState = 'waiting';
-            this.closeAll();
-        });
-
-        this.signaling.on('room-joined', (data) => {
-            this.currentRoomId = data.room_id;
-            this.hostId = data.host_id;
-            this.isHost = this.signaling.id === data.host_id;
-            this.currentState = (data.peers || []).length >= 2 ? 'ready' : 'waiting';
-            this.closeAll();
-        });
-
-        this.signaling.on('room-state-update', (data) => {
-            if (data.room_id !== this.currentRoomId) return;
-            this.currentState = data.state;
-            this.hostId = data.host_id;
-            this.isHost = this.signaling.id === data.host_id;
-            if (data.state !== 'ready') this.closeAll();
-        });
-
-        this.signaling.on('offer', async (data) => {
-            await this.handleOffer(data.sdp, data.sender, data.room_id);
-        });
-
-        this.signaling.on('answer', async (data) => {
-            const conn = this.connections.get(data.sender);
-            if (!conn?.pc) return;
-            await conn.pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
-        });
-
-        this.signaling.on('ice-candidate', async (data) => {
-            const conn = this.connections.get(data.sender);
-            if (!conn?.pc || !data.candidate) return;
-            try {
-                await conn.pc.addIceCandidate(new RTCIceCandidate(data.candidate));
-            } catch (error) {
-                console.warn('[WebRTC] ICE add failed', error);
-            }
-        });
-
-        this.signaling.on('disconnected', () => {
-            this.closeAll();
-            this.currentRoomId = null;
-            this.currentState = 'closed';
-            this.isHost = false;
-            this.hostId = null;
-        });
-    }
-
-    _setupPeerConnection(pc, peerId) {
-        pc.onicecandidate = (event) => {
-            if (!event.candidate || !this.currentRoomId) return;
+        this.peerConnection.onicecandidate = (event) => {
+            if (!event.candidate || !this.remotePeerId || !this.roomId) return;
             this.signaling.send('ice-candidate', {
-                target: peerId,
-                room_id: this.currentRoomId,
+                room_id: this.roomId,
+                target: this.remotePeerId,
                 candidate: event.candidate,
             });
         };
 
-        pc.onconnectionstatechange = () => {
-            const state = pc.connectionState;
-            const conn = this.connections.get(peerId);
-            if (conn) conn.state = state;
-            if (this._onStateChange) this._onStateChange(peerId, state);
-            if (state === 'failed' || state === 'closed') this.close(peerId);
+        this.peerConnection.onconnectionstatechange = () => {
+            const state = this.peerConnection?.connectionState || 'closed';
+            this._setState(state);
+            if (state === 'failed' || state === 'closed' || state === 'disconnected') {
+                if (state !== 'connected') this.close();
+            }
+        };
+
+        this.peerConnection.ondatachannel = (event) => {
+            console.log('[WebRTC] received data channel');
+            this.dataChannel = event.channel;
+            this._setupDataChannel(this.dataChannel);
         };
     }
 
-    _setupDataChannel(dc, peerId) {
+    _setupDataChannel(dc) {
         dc.binaryType = 'arraybuffer';
-
-        dc.onopen = () => {
-            const conn = this.connections.get(peerId);
-            if (conn) conn.state = 'connected';
-            if (this._onStateChange) this._onStateChange(peerId, 'connected');
-            if (this._onDataChannel) this._onDataChannel(peerId, dc);
-        };
-
+        dc.onopen = () => this._setState('connected');
+        dc.onclose = () => this._setState('channel-closed');
+        dc.onerror = () => this._setState('channel-error');
         dc.onmessage = (event) => {
-            if (this._onMessage) this._onMessage(peerId, event.data);
+            if (this._onMessage) this._onMessage(event.data);
         };
+    }
+
+    _setState(next) {
+        this.connectionState = next;
+        if (this._onState) this._onState(next);
+    }
+
+    _bindSignaling() {
+        this.signaling.on('offer', async ({ sdp, sender, room_id }) => {
+            if (!this.roomId || room_id !== this.roomId || this.isHost) {
+                console.warn('[WebRTC] rejected unexpected offer');
+                return;
+            }
+            this.remotePeerId = sender;
+            if (!this.peerConnection) await this._createPeerConnection();
+            await this.peerConnection.setRemoteDescription(new RTCSessionDescription(sdp));
+            this.hasReceivedOffer = true;
+            const answer = await this.peerConnection.createAnswer();
+            await this.peerConnection.setLocalDescription(answer);
+            console.log('[WebRTC] sending answer');
+            this.signaling.send('answer', {
+                room_id: this.roomId,
+                target: sender,
+                sdp: this.peerConnection.localDescription,
+            });
+        });
+
+        this.signaling.on('answer', async ({ sdp, sender, room_id }) => {
+            if (!this.roomId || room_id !== this.roomId || !this.isHost || !this.peerConnection) return;
+            if (sender !== this.remotePeerId) return;
+            await this.peerConnection.setRemoteDescription(new RTCSessionDescription(sdp));
+            console.log('[WebRTC] answer applied');
+        });
+
+        this.signaling.on('ice-candidate', async ({ candidate, sender, room_id }) => {
+            if (!this.peerConnection || !candidate || !this.roomId || room_id !== this.roomId) return;
+            if (this.remotePeerId && sender !== this.remotePeerId) return;
+            try {
+                await this.peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
+            } catch (error) {
+                console.warn('[WebRTC] failed to add ICE candidate', error);
+            }
+        });
+
+        this.signaling.on('disconnected', () => this.close());
     }
 }
