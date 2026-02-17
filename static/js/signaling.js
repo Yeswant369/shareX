@@ -3,6 +3,7 @@ export class Signaling {
         this.socket = null;
         this.listeners = new Map();
         this.connected = false;
+        this.pendingMessages = [];
     }
 
     connect() {
@@ -17,6 +18,7 @@ export class Signaling {
             this.socket.on('connect', () => {
                 this.connected = true;
                 console.log('[Signaling] connected', this.socket.id);
+                this._flushPendingMessages();
                 resolve();
             });
 
@@ -56,12 +58,23 @@ export class Signaling {
     }
 
     send(eventName, payload = {}) {
-        if (!this.socket || !this.connected) {
-            console.warn('[Signaling] blocked send while disconnected', eventName);
+        if (!this.socket || !this.connected || !this.socket.connected) {
+            console.warn('[Signaling] queue send while disconnected', eventName);
+            this.pendingMessages.push({ eventName, payload });
             return;
         }
         console.log('[Signaling] send', eventName, payload);
         this.socket.emit(eventName, payload);
+    }
+
+    _flushPendingMessages() {
+        if (!this.socket || !this.connected || this.pendingMessages.length === 0) return;
+        const queued = [...this.pendingMessages];
+        this.pendingMessages = [];
+        queued.forEach(({ eventName, payload }) => {
+            console.log('[Signaling] flush queued send', eventName, payload);
+            this.socket.emit(eventName, payload || {});
+        });
     }
 
     emitLocal(eventName, payload) {
