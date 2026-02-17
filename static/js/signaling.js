@@ -1,7 +1,6 @@
 /**
  * ShareX — Signaling Module
  * Socket.IO wrapper for WebRTC signaling.
- * Event-driven architecture with clean pub/sub.
  */
 
 export class Signaling {
@@ -11,49 +10,42 @@ export class Signaling {
         this._connected = false;
     }
 
-    /**
-     * Connect to the signaling server.
-     */
     async connect() {
         return new Promise((resolve, reject) => {
-            const protocol = window.location.protocol;
-            const host = window.location.host;
+            const origin = window.location.origin;
 
-            this.socket = io(`${protocol}//${host}`, {
+            this.socket = io(origin, {
                 transports: ['websocket', 'polling'],
                 reconnection: true,
-                reconnectionAttempts: 10,
-                reconnectionDelay: 1000,
-                reconnectionDelayMax: 5000,
+                reconnectionAttempts: 20,
+                reconnectionDelay: 800,
+                reconnectionDelayMax: 4000,
                 timeout: 20000,
             });
 
             this.socket.on('connect', () => {
                 this._connected = true;
-                console.log('[Signaling] Connected:', this.socket.id);
+                console.log('[Signaling] connected', this.socket.id);
                 resolve();
             });
 
             this.socket.on('connect_error', (err) => {
-                console.error('[Signaling] Connection error:', err.message);
-                if (!this._connected) {
-                    reject(err);
-                }
+                console.error('[Signaling] connect_error', err.message);
+                if (!this._connected) reject(err);
             });
 
             this.socket.on('disconnect', (reason) => {
                 this._connected = false;
-                console.warn('[Signaling] Disconnected:', reason);
+                console.warn('[Signaling] disconnected', reason);
                 this._emit('disconnected', { reason });
             });
 
             this.socket.on('reconnect', (attempt) => {
                 this._connected = true;
-                console.log('[Signaling] Reconnected after', attempt, 'attempts');
+                console.log('[Signaling] reconnected attempt=', attempt);
                 this._emit('reconnected', { attempt });
             });
 
-            // ─── Relay all server events to local listeners ───
             const relayEvents = [
                 'connected',
                 'nearby-peers',
@@ -62,97 +54,67 @@ export class Signaling {
                 'peer-updated',
                 'room-created',
                 'room-joined',
+                'room-state',
+                'host-changed',
                 'join-error',
                 'offer',
                 'answer',
                 'ice-candidate',
                 'transfer-accepted',
-                'transfer-rejected'
+                'transfer-rejected',
             ];
 
-            relayEvents.forEach(event => {
-                this.socket.on(event, (data) => {
-                    this._emit(event, data);
-                });
+            relayEvents.forEach((event) => {
+                this.socket.on(event, (data) => this._emit(event, data));
             });
         });
     }
 
-    /**
-     * Set device name on server.
-     */
     setName(name) {
         this.send('set-name', { name });
     }
 
-    /**
-     * Send event to server.
-     */
-    send(event, data) {
+    send(event, data = {}) {
         if (this.socket && this._connected) {
             this.socket.emit(event, data);
         } else {
-            console.warn('[Signaling] Cannot send, not connected');
+            console.warn('[Signaling] cannot send event while disconnected:', event);
         }
     }
 
-    /**
-     * Subscribe to events.
-     */
     on(event, callback) {
-        if (!this._listeners[event]) {
-            this._listeners[event] = [];
-        }
+        if (!this._listeners[event]) this._listeners[event] = [];
         this._listeners[event].push(callback);
     }
 
-    /**
-     * Unsubscribe from events.
-     */
     off(event, callback) {
-        if (this._listeners[event]) {
-            this._listeners[event] = this._listeners[event].filter(cb => cb !== callback);
-        }
+        if (!this._listeners[event]) return;
+        this._listeners[event] = this._listeners[event].filter((cb) => cb !== callback);
     }
 
-    /**
-     * Emit event to local listeners.
-     */
     _emit(event, data) {
-        const listeners = this._listeners[event];
-        if (listeners) {
-            listeners.forEach(cb => {
-                try {
-                    cb(data);
-                } catch (err) {
-                    console.error(`[Signaling] Listener error for ${event}:`, err);
-                }
-            });
-        }
+        const listeners = this._listeners[event] || [];
+        listeners.forEach((cb) => {
+            try {
+                cb(data);
+            } catch (err) {
+                console.error(`[Signaling] listener error event=${event}`, err);
+            }
+        });
     }
 
-    /**
-     * Check connection status.
-     */
     get isConnected() {
         return this._connected;
     }
 
-    /**
-     * Get socket ID.
-     */
     get id() {
         return this.socket ? this.socket.id : null;
     }
 
-    /**
-     * Disconnect from server.
-     */
     disconnect() {
-        if (this.socket) {
-            this.socket.disconnect();
-            this.socket = null;
-            this._connected = false;
-        }
+        if (!this.socket) return;
+        this.socket.disconnect();
+        this.socket = null;
+        this._connected = false;
     }
 }

@@ -1,6 +1,6 @@
 /**
  * ShareX — Main Application Entry
- * Orchestrates all modules and initializes the application.
+ * Deterministic room + signaling orchestration.
  */
 
 import { Signaling } from './signaling.js';
@@ -12,7 +12,6 @@ import { FileTransfer } from './file-transfer.js';
 import { DeviceCards } from './device-cards.js';
 import { UIState } from './ui-state.js';
 import { Vibration } from './vibration.js';
-
 
 class ShareXApp {
     constructor() {
@@ -27,77 +26,178 @@ class ShareXApp {
         this.vibration = null;
         this.myId = null;
         this.myName = this._generateDeviceName();
+
+        // RoomManager state
+        this.roomId = null;
+        this.hostId = null;
+        this.isHost = false;
+        this.isInRoom = false;
+
+        this._statusNode = null;
+        this._debugNode = null;
+        this._debugEnabled = new URLSearchParams(window.location.search).get('debug') === 'true';
+        this._connState = 'DISCONNECTED';
     }
 
     async init() {
-        console.log('[ShareX] Initializing...');
-
-        // Initialize UI state manager first
         this.uiState = new UIState();
         this.vibration = new Vibration();
 
-        // ─── User Naming ───
         const savedName = localStorage.getItem('sharex-name');
-        if (savedName) {
-            this.myName = savedName;
-        } else {
-            await this._promptForName();
-        }
+        if (savedName) this.myName = savedName;
+        else await this._promptForName();
 
-        // Initialize signaling
+        this._initStatusOverlay();
+
         this.signaling = new Signaling();
         await this.signaling.connect();
 
-        // Set device name
-        this.signaling.setName(this.myName);
-
-        // Listen for connection
         this.signaling.on('connected', (data) => {
             this.myId = data.id;
-            console.log('[ShareX] Connected as:', this.myId);
+            this._syncRoleState();
+            this._renderStatusOverlay();
         });
 
-        // Initialize WebRTC manager
+        this.signaling.on('disconnected', () => {
+            this._connState = 'DISCONNECTED';
+            this._clearRoomState();
+            this._renderStatusOverlay();
+        });
+
+        this.signaling.setName(this.myName);
+
         this.webrtc = new WebRTCManager(this.signaling);
-
-        // Initialize file transfer
         this.fileTransfer = new FileTransfer(this.webrtc, this.uiState);
-
-        // Initialize device cards
         this.deviceCards = new DeviceCards(this.signaling, this.webrtc, this.fileTransfer);
-
-        // Initialize presence
         this.presence = new Presence(this.signaling, this.deviceCards);
-
-        // Initialize QR connect
         this.qr = new QRConnect(this.signaling);
-
-        // Initialize numeric code
         this.numericCode = new NumericCode(this.signaling);
 
-        // Bind UI events
         this._bindEvents();
-
-        // Setup micro-dots
+        this._bindRoomEvents();
         this._createMicroDots();
-
-        // Setup scroll reveal
-        // Initialize geometric cube animation
-
-
-        // Setup scroll reveal
         this._setupScrollReveal();
-
-        // Listen for room entry
-        this.signaling.on('room-joined', (data) => {
-            console.log('[ShareX] Joined room. Peers:', data.peers);
-            this.uiState.showToast(`Joined room with ${data.peers.length} peer(s)`);
-        });
-
-        // Auto-join room from URL (QR scan flow)
         this._checkURLJoin();
 
-        console.log('[ShareX] Ready. Name:', this.myName);
+        console.log('[ShareX] ready name=', this.myName);
+    }
+
+    _bindRoomEvents() {
+        this.signaling.on('room-created', (data) => {
+            this.roomId = data.room_id || null;
+            this.hostId = data.host_id || this.myId;
+            this.isInRoom = Boolean(this.roomId);
+            this.isHost = true;
+            this._syncRoleState();
+            this._renderStatusOverlay();
+            if (this.roomId) this.uiState.showToast(`Room created: ${this.roomId}`);
+        });
+
+        this.signaling.on('room-joined', (data) => {
+            this.roomId = data.room_id || null;
+            this.hostId = data.host_id || null;
+            this.isInRoom = Boolean(this.roomId);
+            this.isHost = this.myId && this.hostId ? this.myId === this.hostId : false;
+            this._syncRoleState();
+            this._renderStatusOverlay();
+
+            if (this.roomId) {
+                this.uiState.showToast(`Connected to room ${this.roomId}`);
+            }
+        });
+
+        this.signaling.on('room-state', (data) => {
+            this.roomId = data.room_id || this.roomId;
+            this.hostId = data.host_id || this.hostId;
+            this.isInRoom = Boolean(this.roomId);
+            this.isHost = this.myId && this.hostId ? this.myId === this.hostId : false;
+            this._syncRoleState();
+            this._renderStatusOverlay();
+        });
+
+        this.signaling.on('host-changed', (data) => {
+            if (this.roomId && data.room_id !== this.roomId) return;
+            this.hostId = data.host_id;
+            this.isHost = this.myId && this.hostId ? this.myId === this.hostId : false;
+            this._syncRoleState();
+            this._renderStatusOverlay();
+        });
+
+        this.signaling.on('join-error', (data) => {
+            this.uiState.showToast(data?.message || 'Join failed');
+        });
+
+        this.webrtc.onStateChange((_peerId, state) => {
+            this._connState = (state || 'disconnected').toUpperCase();
+            this._renderStatusOverlay();
+        });
+    }
+
+    _syncRoleState() {
+        if (!this.webrtc) return;
+        this.webrtc.setIdentity({
+            myId: this.myId,
+            roomId: this.roomId,
+            hostId: this.hostId,
+            isHost: this.isHost,
+            isInRoom: this.isInRoom,
+        });
+    }
+
+    _clearRoomState() {
+        this.roomId = null;
+        this.hostId = null;
+        this.isHost = false;
+        this.isInRoom = false;
+        this._syncRoleState();
+    }
+
+    _initStatusOverlay() {
+        this._statusNode = document.createElement('div');
+        this._statusNode.id = 'room-status-overlay';
+        this._statusNode.style.position = 'fixed';
+        this._statusNode.style.right = '12px';
+        this._statusNode.style.bottom = this._debugEnabled ? '64px' : '12px';
+        this._statusNode.style.zIndex = '9999';
+        this._statusNode.style.background = 'rgba(0,0,0,0.72)';
+        this._statusNode.style.color = '#fff';
+        this._statusNode.style.padding = '6px 10px';
+        this._statusNode.style.borderRadius = '8px';
+        this._statusNode.style.fontSize = '11px';
+        this._statusNode.style.fontFamily = 'monospace';
+        this._statusNode.style.pointerEvents = 'none';
+        document.body.appendChild(this._statusNode);
+
+        if (this._debugEnabled) {
+            this._debugNode = document.createElement('div');
+            this._debugNode.id = 'debug-overlay';
+            this._debugNode.style.position = 'fixed';
+            this._debugNode.style.right = '12px';
+            this._debugNode.style.bottom = '12px';
+            this._debugNode.style.zIndex = '9999';
+            this._debugNode.style.background = 'rgba(0,0,0,0.78)';
+            this._debugNode.style.color = '#b5ffb8';
+            this._debugNode.style.padding = '6px 10px';
+            this._debugNode.style.borderRadius = '8px';
+            this._debugNode.style.fontSize = '11px';
+            this._debugNode.style.fontFamily = 'monospace';
+            this._debugNode.style.pointerEvents = 'none';
+            document.body.appendChild(this._debugNode);
+        }
+
+        this._renderStatusOverlay();
+    }
+
+    _renderStatusOverlay() {
+        if (this._statusNode) {
+            const roomText = this.isInRoom ? this.roomId : 'not-joined';
+            const role = this.isHost ? 'HOST' : 'JOINER';
+            this._statusNode.textContent = `Room: ${roomText} | Role: ${this.isInRoom ? role : '-'}`;
+        }
+
+        if (this._debugNode) {
+            this._debugNode.textContent = `Connection: ${this._connState}`;
+        }
     }
 
     _promptForName() {
@@ -108,14 +208,11 @@ class ShareXApp {
                 const btn = document.getElementById('save-name-btn');
 
                 if (!modal || !input || !btn) {
-                    console.warn('[ShareX] Name modal elements missing, skipping prompt.');
                     resolve();
                     return;
                 }
 
-                // Default suggestion
                 input.value = this._generateDeviceName();
-
                 modal.classList.remove('hidden');
 
                 const save = () => {
@@ -130,9 +227,8 @@ class ShareXApp {
                 input.addEventListener('keypress', (e) => {
                     if (e.key === 'Enter') save();
                 });
-            } catch (e) {
-                console.error('[ShareX] Error in name prompt:', e);
-                resolve(); // Proceed anyway
+            } catch (_) {
+                resolve();
             }
         });
     }
@@ -143,34 +239,34 @@ class ShareXApp {
         const code = params.get('code');
 
         if (roomId) {
-            console.log('[ShareX] Auto-joining room from URL:', roomId);
             this.signaling.send('join-room', { room_id: roomId });
-            this.uiState.showToast('Joining room...');
-            // Clean URL
+            this.uiState.showToast('Joining room from QR...');
             window.history.replaceState({}, document.title, '/');
-        } else if (code) {
-            console.log('[ShareX] Auto-joining room with code:', code);
+            return;
+        }
+
+        if (code) {
             this.signaling.send('join-room', { code });
-            this.uiState.showToast('Joining room...');
+            this.uiState.showToast('Joining room with code...');
             window.history.replaceState({}, document.title, '/');
         }
     }
 
     _generateDeviceName() {
-        const agents = [
-            'Chrome', 'Firefox', 'Safari', 'Edge', 'Mobile'
-        ];
+        const agents = ['Chrome', 'Firefox', 'Safari', 'Edge', 'Mobile'];
         const ua = navigator.userAgent;
         let browser = 'Device';
-        for (const a of agents) {
-            if (ua.includes(a)) { browser = a; break; }
+        for (const agent of agents) {
+            if (ua.includes(agent)) {
+                browser = agent;
+                break;
+            }
         }
         const platform = /Mobile|Android|iPhone/i.test(ua) ? 'Mobile' : 'Desktop';
         return `${browser} ${platform}`;
     }
 
     _bindEvents() {
-        // ─── Share buttons ───
         const btnShare = document.getElementById('btn-share');
         const btnShareDesktop = document.getElementById('btn-share-desktop');
         const fileInput = document.getElementById('file-input');
@@ -183,30 +279,20 @@ class ShareXApp {
         if (btnShare) btnShare.addEventListener('click', openFilePicker);
         if (btnShareDesktop) btnShareDesktop.addEventListener('click', openFilePicker);
 
-        // ─── SENDER FLOW: File Selection -> Create Room -> Show Modal ───
         fileInput.addEventListener('change', (e) => {
             const files = e.target.files;
-            if (files && files.length > 0) {
+            if (files?.length > 0) {
                 this.fileTransfer.setPendingFiles(files);
-
-                // Create Room for "AirDrop" Station
-                this.signaling.send('create-room', {});
-                this.qr.showGen(); // Reusing the QR generation logic
-
-                // Also show a simplified pairing modal
+                this.qr.showGen();
                 this.uiState.showToast('Ready to send. Ask receiver to connect.');
             }
             fileInput.value = '';
         });
 
-        // ─── Receive buttons ───
         const btnReceive = document.getElementById('btn-receive');
         const btnReceiveDesktop = document.getElementById('btn-receive-desktop');
-
         const startReceiving = () => {
             this.vibration.tap();
-            // "AirDrop-like" precision: Ask for code or show scanner
-            // For now, default to "Enter Code" as the primary manual receive action
             this.numericCode.show();
             this.uiState.showToast('Enter code from sender');
         };
@@ -214,7 +300,6 @@ class ShareXApp {
         if (btnReceive) btnReceive.addEventListener('click', startReceiving);
         if (btnReceiveDesktop) btnReceiveDesktop.addEventListener('click', startReceiving);
 
-        // ─── Connection modes ───
         const modeAuto = document.getElementById('mode-auto');
         if (modeAuto) {
             modeAuto.addEventListener('click', () => {
@@ -223,10 +308,13 @@ class ShareXApp {
             });
         }
 
-        document.getElementById('mode-qr').addEventListener('click', () => {
-            this.vibration.tap();
-            this.qr.showGen();
-        });
+        const modeQR = document.getElementById('mode-qr');
+        if (modeQR) {
+            modeQR.addEventListener('click', () => {
+                this.vibration.tap();
+                this.qr.showGen();
+            });
+        }
 
         const btnScan = document.getElementById('mode-scan');
         if (btnScan) {
@@ -236,47 +324,29 @@ class ShareXApp {
             });
         }
 
-        document.getElementById('mode-code').addEventListener('click', () => {
-            this.vibration.tap();
-            this.numericCode.show();
-        });
-
-        // ─── Incoming transfer handling ───
-        this.signaling.on('offer', (data) => {
-            if (data.file_meta) {
-                this._showIncomingRequest(data);
-            }
-        });
-
-        // ─── Transfer cancel ───
-        const transferCancel = document.getElementById('transfer-cancel');
-        if (transferCancel) {
-            transferCancel.addEventListener('click', () => {
-                this.fileTransfer.cancel();
+        const modeCode = document.getElementById('mode-code');
+        if (modeCode) {
+            modeCode.addEventListener('click', () => {
+                this.vibration.tap();
+                this.numericCode.show();
             });
         }
 
-        // ─── SENDER FLOW: File Selection -> Create Room -> Show Modal ───
-        fileInput.addEventListener('change', (e) => {
-            const files = e.target.files;
-            if (files && files.length > 0) {
-                this.fileTransfer.setPendingFiles(files);
-
-                // Trigger QR/Code Modal (which auto-creates room)
-                this.qr.showGen();
-
-                this.uiState.showToast('Ready to send. Ask receiver to connect.');
-            }
-            fileInput.value = '';
+        this.signaling.on('offer', (data) => {
+            if (data.file_meta) this._showIncomingRequest(data);
         });
+
+        const transferCancel = document.getElementById('transfer-cancel');
+        if (transferCancel) {
+            transferCancel.addEventListener('click', () => this.fileTransfer.cancel());
+        }
     }
 
     _showDeviceList() {
         const deviceList = document.getElementById('device-list');
-        if (deviceList) {
-            deviceList.classList.remove('hidden');
-            deviceList.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        }
+        if (!deviceList) return;
+        deviceList.classList.remove('hidden');
+        deviceList.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
 
     _showIncomingRequest(data) {
@@ -295,7 +365,6 @@ class ShareXApp {
         from.textContent = `From: ${data.name || 'Unknown'}`;
 
         this.vibration.notify();
-
         modal.classList.remove('hidden');
 
         const cleanup = () => {
@@ -304,11 +373,10 @@ class ShareXApp {
             rejectBtn.replaceWith(rejectBtn.cloneNode(true));
         };
 
-        document.getElementById('incoming-accept').addEventListener('click', () => {
+        document.getElementById('incoming-accept').addEventListener('click', async () => {
             this.vibration.tap();
             this.signaling.send('transfer-accepted', { target: data.sender });
-            // Accept the WebRTC offer
-            this.webrtc.handleOffer(data.sdp, data.sender);
+            await this.webrtc.handleOffer(data.sdp, data.sender, data.room_id);
             this.fileTransfer.startReceiving(data.file_meta);
             cleanup();
         }, { once: true });
@@ -343,18 +411,18 @@ class ShareXApp {
         for (let i = 0; i < 30; i++) {
             const dotUp = document.createElement('span');
             dotUp.className = 'split-layout__dot';
-            dotUp.style.left = Math.random() * 100 + '%';
-            dotUp.style.top = Math.random() * 100 + '%';
-            dotUp.style.animationDelay = Math.random() * 4 + 's';
-            dotUp.style.animationDuration = (3 + Math.random() * 3) + 's';
+            dotUp.style.left = `${Math.random() * 100}%`;
+            dotUp.style.top = `${Math.random() * 100}%`;
+            dotUp.style.animationDelay = `${Math.random() * 4}s`;
+            dotUp.style.animationDuration = `${3 + Math.random() * 3}s`;
             dotsUp.appendChild(dotUp);
 
             const dotDown = document.createElement('span');
             dotDown.className = 'split-layout__dot';
-            dotDown.style.left = Math.random() * 100 + '%';
-            dotDown.style.top = Math.random() * 100 + '%';
-            dotDown.style.animationDelay = Math.random() * 4 + 's';
-            dotDown.style.animationDuration = (3 + Math.random() * 3) + 's';
+            dotDown.style.left = `${Math.random() * 100}%`;
+            dotDown.style.top = `${Math.random() * 100}%`;
+            dotDown.style.animationDelay = `${Math.random() * 4}s`;
+            dotDown.style.animationDuration = `${3 + Math.random() * 3}s`;
             dotsDown.appendChild(dotDown);
         }
     }
@@ -364,24 +432,23 @@ class ShareXApp {
         if (!elements.length) return;
 
         const observer = new IntersectionObserver((entries) => {
-            entries.forEach(entry => {
+            entries.forEach((entry) => {
                 if (entry.isIntersecting) {
                     entry.target.classList.add('reveal', 'visible');
                 }
             });
         }, { threshold: 0.1 });
 
-        elements.forEach(el => {
+        elements.forEach((el) => {
             el.classList.add('reveal');
             observer.observe(el);
         });
     }
 }
 
-// ─── Bootstrap ───
 document.addEventListener('DOMContentLoaded', () => {
     const app = new ShareXApp();
-    app.init().catch(err => {
-        console.error('[ShareX] Initialization failed:', err);
+    app.init().catch((err) => {
+        console.error('[ShareX] initialization failed', err);
     });
 });
