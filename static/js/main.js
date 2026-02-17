@@ -188,12 +188,8 @@ class ShareXApp {
             const files = e.target.files;
             if (files && files.length > 0) {
                 this.fileTransfer.setPendingFiles(files);
-
-                // Create Room for "AirDrop" Station
-                this.signaling.send('create-room', {});
-                this.qr.showGen(); // Reusing the QR generation logic
-
-                // Also show a simplified pairing modal
+                // QR module creates the room and renders both room_id + numeric code.
+                this.qr.showGen();
                 this.uiState.showToast('Ready to send. Ask receiver to connect.');
             }
             fileInput.value = '';
@@ -256,19 +252,6 @@ class ShareXApp {
             });
         }
 
-        // ─── SENDER FLOW: File Selection -> Create Room -> Show Modal ───
-        fileInput.addEventListener('change', (e) => {
-            const files = e.target.files;
-            if (files && files.length > 0) {
-                this.fileTransfer.setPendingFiles(files);
-
-                // Trigger QR/Code Modal (which auto-creates room)
-                this.qr.showGen();
-
-                this.uiState.showToast('Ready to send. Ask receiver to connect.');
-            }
-            fileInput.value = '';
-        });
     }
 
     _showDeviceList() {
@@ -308,7 +291,7 @@ class ShareXApp {
             this.vibration.tap();
             this.signaling.send('transfer-accepted', { target: data.sender });
             // Accept the WebRTC offer
-            this.webrtc.handleOffer(data.sdp, data.sender);
+            this.webrtc.handleOffer(data.sdp, data.sender, data.room_id);
             this.fileTransfer.startReceiving(data.file_meta);
             cleanup();
         }, { once: true });

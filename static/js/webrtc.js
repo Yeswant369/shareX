@@ -13,71 +13,75 @@ export class WebRTCManager {
         this._onDataChannel = null;
         this._onMessage = null;
         this._onStateChange = null;
-        this.isHost = false; // Strict role enforcement
+        this.isHost = false;
+        this.currentRoomId = null;
+        this.roomReady = false;
 
         this._bindSignaling();
     }
 
-    /**
-     * Set callback for incoming data channel messages.
-     */
     onMessage(callback) {
         this._onMessage = callback;
     }
 
-    /**
-     * Set callback for data channel open events.
-     */
     onDataChannel(callback) {
         this._onDataChannel = callback;
     }
 
-    /**
-     * Set callback for connection state changes.
-     */
     onStateChange(callback) {
         this._onStateChange = callback;
     }
 
-    /**
-     * Initiate a connection to a peer (caller side).
-     * ONLY HOST can create connections.
-     */
+
+    offStateChange(callback) {
+        if (!this._onStateChange) return;
+        if (this._onStateChange === callback) {
+            this._onStateChange = null;
+        }
+    }
+
     async createConnection(peerId, fileMeta = null) {
         if (!this.isHost) {
-            console.warn('[WebRTC] Rejected createConnection (Not Host)');
+            console.warn('[WebRTC] Rejected createConnection (not host):', peerId);
+            return null;
+        }
+
+        if (!this.roomReady || !this.currentRoomId) {
+            console.warn('[WebRTC] Rejected createConnection (room not ready):', peerId);
             return null;
         }
 
         if (this.connections.has(peerId)) {
-            console.warn('[WebRTC] Connection already exists:', peerId);
-            return null;
+            const conn = this.connections.get(peerId);
+            if (conn && (conn.state === 'connected' || conn.state === 'connecting')) {
+                console.warn('[WebRTC] Connection already in progress/existing:', peerId, conn.state);
+                return conn;
+            }
         }
 
-        console.log('[WebRTC] Creating connection to:', peerId);
+        console.log('[WebRTC] Creating host connection to:', peerId, 'room:', this.currentRoomId);
 
         const config = await getICEConfig();
         const pc = new RTCPeerConnection(config);
 
-        // Create data channel (Unordered, No Retransmits for speed)
         const dc = pc.createDataChannel('sharex-transfer', {
             ordered: false,
             maxRetransmits: 0
         });
 
-        dc.bufferedAmountLowThreshold = 512 * 1024; // 512KB Buffer Threshold
+        dc.bufferedAmountLowThreshold = 512 * 1024;
 
         this._setupDataChannel(dc, peerId);
         this._setupPeerConnection(pc, peerId);
 
         this.connections.set(peerId, { pc, dc, state: 'connecting' });
 
-        // Create and send offer
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
 
         this.signaling.send('offer', {
             target: peerId,
+            room_id: this.currentRoomId,
             sdp: pc.localDescription,
             file_meta: fileMeta
         });
@@ -85,16 +89,30 @@ export class WebRTCManager {
         return { pc, dc };
     }
 
-    /**
-     * Handle an incoming offer (callee side).
-     */
-    async handleOffer(sdp, senderId) {
-        console.log('[WebRTC] Handling offer from:', senderId);
+    async handleOffer(sdp, senderId, roomId = null) {
+        console.log('[WebRTC] Handling offer from:', senderId, 'room:', roomId || this.currentRoomId);
 
-        // Avoid duplicate connection handling if already connected
-        if (this.connections.has(senderId) && this.connections.get(senderId).state === 'connected') {
-            console.warn('[WebRTC] Already connected to:', senderId);
+        if (this.isHost) {
+            console.warn('[WebRTC] Host received offer unexpectedly; ignoring.');
             return;
+        }
+
+        if (!this.roomReady || !this.currentRoomId) {
+            console.warn('[WebRTC] Offer received before room-joined; ignoring sender:', senderId);
+            return;
+        }
+
+        if (roomId && roomId !== this.currentRoomId) {
+            console.warn('[WebRTC] Offer room mismatch. expected:', this.currentRoomId, 'got:', roomId);
+            return;
+        }
+
+        if (this.connections.has(senderId)) {
+            const existing = this.connections.get(senderId);
+            if (existing && (existing.state === 'connected' || existing.state === 'connecting')) {
+                console.warn('[WebRTC] Existing connection for offer sender:', senderId, existing.state);
+                return;
+            }
         }
 
         const config = await getICEConfig();
@@ -102,7 +120,6 @@ export class WebRTCManager {
 
         this._setupPeerConnection(pc, senderId);
 
-        // Listen for incoming data channel
         pc.ondatachannel = (event) => {
             const dc = event.channel;
             dc.bufferedAmountLowThreshold = 512 * 1024;
@@ -124,13 +141,11 @@ export class WebRTCManager {
 
         this.signaling.send('answer', {
             target: senderId,
+            room_id: this.currentRoomId,
             sdp: pc.localDescription
         });
     }
 
-    /**
-     * Send data through the data channel to a peer.
-     */
     send(peerId, data) {
         const conn = this.connections.get(peerId);
         if (!conn || !conn.dc || conn.dc.readyState !== 'open') {
@@ -146,25 +161,16 @@ export class WebRTCManager {
         }
     }
 
-    /**
-     * Get the data channel for a peer.
-     */
     getDataChannel(peerId) {
         const conn = this.connections.get(peerId);
         return conn ? conn.dc : null;
     }
 
-    /**
-     * Get connection state.
-     */
     getState(peerId) {
         const conn = this.connections.get(peerId);
         return conn ? conn.state : null;
     }
 
-    /**
-     * Close a connection.
-     */
     close(peerId) {
         const conn = this.connections.get(peerId);
         if (conn) {
@@ -179,34 +185,40 @@ export class WebRTCManager {
         }
     }
 
-    /**
-     * Close all connections.
-     */
     closeAll() {
         for (const peerId of this.connections.keys()) {
             this.close(peerId);
         }
     }
 
-    // ─── Private Methods ───
-
     _bindSignaling() {
-        // Strict Role Logic
-        this.signaling.on('room-created', () => {
-            console.log('[WebRTC] Role: HOST');
+        this.signaling.on('room-created', (data) => {
+            this.currentRoomId = data.room_id || null;
+            this.roomReady = Boolean(this.currentRoomId);
             this.isHost = true;
+            this.closeAll();
+            console.log('[WebRTC] Role set HOST. room:', this.currentRoomId);
         });
 
-        this.signaling.on('room-joined', () => {
-            console.log('[WebRTC] Role: CLIENT');
+        this.signaling.on('room-joined', (data) => {
+            this.currentRoomId = data.room_id || null;
+            this.roomReady = Boolean(this.currentRoomId);
             this.isHost = false;
+            this.closeAll();
+            console.log('[WebRTC] Role set JOINER. room:', this.currentRoomId, 'peers:', (data.peers || []).map(p => p.id));
         });
 
-        // Auto-connect on peer join (Only Host initiates)
+        this.signaling.on('disconnected', () => {
+            this.roomReady = false;
+            this.currentRoomId = null;
+            this.isHost = false;
+            this.closeAll();
+            console.warn('[WebRTC] Signaling disconnected. Cleared room/connection state.');
+        });
+
         this.signaling.on('peer-joined', (data) => {
-            if (this.isHost) {
-                console.log('[WebRTC] Peer joined, initiating connection:', data.id);
-                this.createConnection(data.id);
+            if (this.isHost && this.roomReady) {
+                console.log('[WebRTC] Host observed room peer join:', data.id, 'room:', this.currentRoomId);
             }
         });
 
@@ -235,6 +247,7 @@ export class WebRTCManager {
             if (event.candidate) {
                 this.signaling.send('ice-candidate', {
                     target: peerId,
+                    room_id: this.currentRoomId,
                     candidate: event.candidate
                 });
             }

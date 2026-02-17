@@ -18,23 +18,17 @@ export class FileTransfer {
         this._bindWebRTC();
     }
 
-    /**
-     * Set files to be sent (from file picker).
-     */
     setPendingFiles(files) {
         this.pendingFiles = Array.from(files);
     }
 
-    /**
-     * Initiate sending files to a peer.
-     */
     async sendTo(peerId) {
         if (!this.pendingFiles || this.pendingFiles.length === 0) {
             this.uiState.showToast('No files selected');
             return;
         }
 
-        const file = this.pendingFiles[0]; // Send first file
+        const file = this.pendingFiles[0];
         const fileMeta = {
             name: file.name,
             size: file.size,
@@ -43,53 +37,49 @@ export class FileTransfer {
 
         this._cancelled = false;
 
-        // Show transfer UI
         this.uiState.showTransfer(file.name, 'Connecting...');
 
-        // Create WebRTC connection with file metadata
-        const { pc, dc } = await this.webrtc.createConnection(peerId, fileMeta);
+        const conn = await this.webrtc.createConnection(peerId, fileMeta);
+        if (!conn) {
+            this.uiState.updateTransferStatus('Waiting for receiver to join room...');
+            this.uiState.showToast('Receiver not ready yet');
+            return;
+        }
 
-        // Wait for data channel to open then send
-        this.webrtc.onDataChannel((channelPeerId, channel) => {
-            if (channelPeerId === peerId || channel.readyState === 'open') {
-                this._startSending(peerId, file, channel);
+        const tryStart = () => {
+            const dc = this.webrtc.getDataChannel(peerId);
+            if (dc && dc.readyState === 'open') {
+                this._startSending(peerId, file, dc);
             }
-        });
+        };
 
-        // Also listen for transfer acceptance
-        this.webrtc.onStateChange((statePeerId, state) => {
+        tryStart();
+
+        const onStateChange = (statePeerId, state) => {
             if (statePeerId === peerId && state === 'connected') {
-                const dc = this.webrtc.getDataChannel(peerId);
-                if (dc && dc.readyState === 'open') {
-                    this._startSending(peerId, file, dc);
-                }
+                tryStart();
             }
-        });
+        };
 
-        // Listen for rejected
-        this.webrtc.signaling.on('transfer-rejected', (data) => {
+        const onRejected = (data) => {
             if (data.sender === peerId) {
                 this.uiState.hideTransfer();
                 this.uiState.showToast('Transfer declined');
                 this.webrtc.close(peerId);
+                this.webrtc.offStateChange(onStateChange);
+                this.webrtc.signaling.off('transfer-rejected', onRejected);
             }
-        });
+        };
+
+        this.webrtc.onStateChange(onStateChange);
+        this.webrtc.signaling.on('transfer-rejected', onRejected);
     }
 
-    /**
-     * Start receiving mode for incoming files.
-     */
     startReceiving(fileMeta) {
         this.uiState.showTransfer(fileMeta.name, 'Receiving...');
         this._cancelled = false;
-
-        // The incoming data will be handled by _onReceiveData when
-        // the WebRTC message callback fires
     }
 
-    /**
-     * Cancel active transfer.
-     */
     cancel() {
         this._cancelled = true;
         this._sending = {};
@@ -98,8 +88,6 @@ export class FileTransfer {
         this.uiState.showToast('Transfer cancelled');
     }
 
-    // ─── Private Methods ───
-
     _bindWebRTC() {
         this.webrtc.onMessage((peerId, data) => {
             this._onReceiveData(peerId, data);
@@ -107,7 +95,7 @@ export class FileTransfer {
     }
 
     async _startSending(peerId, file, dc) {
-        if (this._sending[peerId]) return; // Already sending
+        if (this._sending[peerId]) return;
 
         console.log('[Transfer] Starting send:', file.name, 'to', peerId);
         this.uiState.updateTransferStatus('Sending...');
@@ -116,13 +104,11 @@ export class FileTransfer {
         let offset = 0;
         const totalSize = file.size;
 
-        // Massive Chunk Size for Speed
-        const CHUNK_SIZE = 256 * 1024; // 256KB
-        const BUFFER_THRESHOLD = 512 * 1024; // 512KB
+        const CHUNK_SIZE = 256 * 1024;
+        const BUFFER_THRESHOLD = 512 * 1024;
 
         this._sending[peerId] = { file, offset: 0, startTime };
 
-        // Send file metadata first
         const meta = JSON.stringify({
             type: 'file-meta',
             name: file.name,
@@ -174,7 +160,6 @@ export class FileTransfer {
                         readNextChunk();
                     }
                 } else {
-                    // Transfer Complete
                     dc.send(JSON.stringify({ type: 'file-complete' }));
                     delete this._sending[peerId];
                     this.uiState.updateTransferProgress(100);
@@ -200,7 +185,6 @@ export class FileTransfer {
     _onReceiveData(peerId, data) {
         if (this._cancelled) return;
 
-        // Check if it's a string message (metadata/control)
         if (typeof data === 'string') {
             try {
                 const msg = JSON.parse(data);
@@ -222,11 +206,9 @@ export class FileTransfer {
                     return;
                 }
             } catch (e) {
-                // Not JSON, treat as data
             }
         }
 
-        // Binary data — file chunk
         if (data instanceof ArrayBuffer) {
             const recv = this._receiving[peerId];
             if (!recv) return;
@@ -253,7 +235,6 @@ export class FileTransfer {
         const blob = new Blob(recv.chunks, { type: recv.meta.mimeType || 'application/octet-stream' });
         const url = URL.createObjectURL(blob);
 
-        // Trigger download
         const a = document.createElement('a');
         a.href = url;
         a.download = recv.meta.name;
@@ -262,7 +243,6 @@ export class FileTransfer {
         a.click();
         document.body.removeChild(a);
 
-        // Cleanup
         setTimeout(() => URL.revokeObjectURL(url), 30000);
         delete this._receiving[peerId];
 
