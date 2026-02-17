@@ -75,10 +75,17 @@ class ShareXApp {
 
     async init() {
         await this._ensureName();
-        await this.signaling.connect();
-        this.signaling.setName(localStorage.getItem('sharex-name'));
         this._bindSignalEvents();
         this._bindButtons();
+
+        try {
+            await this.signaling.connect();
+            this.signaling.setName(localStorage.getItem('sharex-name'));
+        } catch (error) {
+            console.error('[App] signaling connection failed', error);
+            this.uiState.showToast('Connection issue detected. You can still select files and retry pairing.');
+        }
+
         this._autoJoinFromURL();
     }
 
